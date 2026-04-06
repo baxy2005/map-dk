@@ -1,0 +1,12 @@
+name: Admin
+email: andris@varadi.tv
+super: true
+id: 3d19b27a-ebfd-4b71-ba28-74921e7ac02e
+password_hash: $2y$12$9z7sD.S5FETj2U3HKfKj/O95eawnY5gegii/bT6gOE1iO0J.7OUxa
+preferences:
+  collections:
+    pages:
+      view: tree
+    listing_mode: list
+    photos:
+      view: list

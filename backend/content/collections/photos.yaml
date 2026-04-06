@@ -1,0 +1,16 @@
+title: Photos
+handle: photos
+description: "Uploaded photos with GPS locations"
+route: /photos/{slug}
+layout: layout
+template: photo
+blueprints:
+  - photo
+auth: true
+revisions: false
+sort_by: date:desc
+searchable: true
+searchable_fields:
+  - title
+  - location_name
+  - exif_camera_make

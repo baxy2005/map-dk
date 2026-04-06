@@ -1,0 +1,101 @@
+title: Photo
+sections:
+  main:
+    display: Main
+    fields:
+      - handle: title
+        field:
+          type: text
+          display: Title
+          required: true
+      - handle: image
+        field:
+          type: assets
+          display: Photo
+          validate:
+            - required
+            - image
+          container: photos
+          max_files: 1
+      - handle: description
+        field:
+          type: textarea
+          display: Description
+      - handle: location_name
+        field:
+          type: text
+          display: Location Name
+      - handle: latitude
+        field:
+          type: float
+          display: Latitude
+      - handle: longitude
+        field:
+          type: float
+          display: Longitude
+      - handle: date_taken
+        field:
+          type: date
+          display: Date Taken
+  exif:
+    display: EXIF Data
+    fields:
+      - handle: exif_camera_make
+        field:
+          type: text
+          display: Camera Make
+      - handle: exif_camera_model
+        field:
+          type: text
+          display: Camera Model
+      - handle: exif_iso
+        field:
+          type: integer
+          display: ISO
+      - handle: exif_focal_length
+        field:
+          type: text
+          display: Focal Length
+      - handle: exif_aperture
+        field:
+          type: text
+          display: Aperture
+      - handle: exif_shutter_speed
+        field:
+          type: text
+          display: Shutter Speed
+      - handle: exif_flash
+        field:
+          type: toggle
+          display: Flash Fired
+  address:
+    display: Full Address
+    fields:
+      - handle: address_village
+        field:
+          type: text
+          display: Village
+      - handle: address_town
+        field:
+          type: text
+          display: Town
+      - handle: address_city
+        field:
+          type: text
+          display: City
+      - handle: address_county
+        field:
+          type: text
+          display: County
+      - handle: address_state
+        field:
+          type: text
+          display: State
+      - handle: address_country
+        field:
+          type: text
+          display: Country
+      - handle: address_postcode
+        field:
+          type: text
+          display: Postcode

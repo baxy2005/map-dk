@@ -1,0 +1,124 @@
+<div class="map-container">
+  <div #mapContainer class="map-view"></div>
+
+  <div class="photo-card-container" *ngIf="selectedPhoto">
+    <div class="photo-card">
+
+      <div class="card-image-wrapper">
+        <img
+          [src]="selectedPhoto.fileDataUrl"
+          alt="Photo"
+          class="photo-preview"
+          (click)="openLightbox()"
+        />
+        <button class="close-btn" (click)="selectedPhoto = null" title="Close">✕</button>
+        <div class="image-location-badge" *ngIf="selectedPhoto.locationName">
+          📍 {{ selectedPhoto.locationName }}
+        </div>
+      </div>
+
+      <div class="card-body">
+        <h3 class="photo-title">{{ selectedPhoto.locationName || selectedPhoto.fileName }}</h3>
+
+        <div class="meta-section">
+          <div class="meta-label">📌 GPS Coordinates</div>
+          <div class="meta-row">
+            <span class="meta-key">Latitude</span>
+            <span class="meta-val">{{ selectedPhoto.lat.toFixed(6) }}°</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">Longitude</span>
+            <span class="meta-val">{{ selectedPhoto.lng.toFixed(6) }}°</span>
+          </div>
+        </div>
+
+        <div class="meta-section" *ngIf="selectedPhoto.address">
+          <div class="meta-label">🏘️ Location</div>
+          <div class="meta-row" *ngIf="selectedPhoto.address.village">
+            <span class="meta-key">Village</span>
+            <span class="meta-val">{{ selectedPhoto.address.village }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.address.town">
+            <span class="meta-key">Town</span>
+            <span class="meta-val">{{ selectedPhoto.address.town }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.address.city">
+            <span class="meta-key">City</span>
+            <span class="meta-val">{{ selectedPhoto.address.city }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.address.county">
+            <span class="meta-key">County</span>
+            <span class="meta-val">{{ selectedPhoto.address.county }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.address.state">
+            <span class="meta-key">State / Region</span>
+            <span class="meta-val">{{ selectedPhoto.address.state }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.address.country">
+            <span class="meta-key">Country</span>
+            <span class="meta-val">{{ selectedPhoto.address.country }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.address.postcode">
+            <span class="meta-key">Postcode</span>
+            <span class="meta-val">{{ selectedPhoto.address.postcode }}</span>
+          </div>
+        </div>
+
+        <div class="meta-section" *ngIf="selectedPhoto.exifData">
+          <div class="meta-label">📷 Camera</div>
+          <div class="meta-row" *ngIf="selectedPhoto.exifData.make || selectedPhoto.exifData.model">
+            <span class="meta-key">Device</span>
+            <span class="meta-val">{{ selectedPhoto.exifData.make }} {{ selectedPhoto.exifData.model }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.exifData.dateTime">
+            <span class="meta-key">Taken</span>
+            <span class="meta-val">{{ selectedPhoto.exifData.dateTime }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.exifData.focalLength">
+            <span class="meta-key">Focal Length</span>
+            <span class="meta-val">{{ selectedPhoto.exifData.focalLength | number:'1.0-1' }} mm</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.exifData.iso">
+            <span class="meta-key">ISO</span>
+            <span class="meta-val">{{ selectedPhoto.exifData.iso }}</span>
+          </div>
+          <div class="meta-row" *ngIf="selectedPhoto.exifData.flashUsed != null">
+            <span class="meta-key">Flash</span>
+            <span class="meta-val">{{ selectedPhoto.exifData.flashUsed ? 'Used' : 'Not used' }}</span>
+          </div>
+        </div>
+
+        <div class="meta-section">
+          <div class="meta-label">📁 File</div>
+          <div class="meta-row" *ngIf="selectedPhoto.timestamp">
+            <span class="meta-key">Uploaded</span>
+            <span class="meta-val">{{ selectedPhoto.timestamp | date:'medium' }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">File name</span>
+            <span class="meta-val file-name">{{ selectedPhoto.fileName }}</span>
+          </div>
+        </div>
+
+        <button type="button" class="delete-btn" (click)="removePhoto(selectedPhoto.id)">
+          🗑 Delete Photo
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="lightbox-overlay" *ngIf="isLightboxOpen" (click)="closeLightbox()">
+    <div class="lightbox-content" (click)="$event.stopPropagation()">
+      <button class="lightbox-close" (click)="closeLightbox()" title="Close">✕</button>
+      <img
+        *ngIf="selectedPhoto"
+        [src]="selectedPhoto.fileDataUrl"
+        [alt]="selectedPhoto.locationName || selectedPhoto.fileName"
+        class="lightbox-image"
+      />
+      <div class="lightbox-caption" *ngIf="selectedPhoto">
+        {{ selectedPhoto.locationName || selectedPhoto.fileName }}
+      </div>
+    </div>
+  </div>
+</div>
