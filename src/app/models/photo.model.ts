@@ -2,6 +2,7 @@ export interface PhotoLocation {
   id: string;
   file?: File;           // not persisted — unavailable after refresh
   fileDataUrl: string;   // base64 — used for display, survives refresh
+  storagePath?: string;
   lat: number;
   lng: number;
   timestamp?: Date;

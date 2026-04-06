@@ -1,8 +1,20 @@
 import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { BehaviorSubject, Observable, of } from 'rxjs';
-import { catchError } from 'rxjs/operators';
+import { BehaviorSubject, Observable } from 'rxjs';
 import * as exifr from 'exifr';
+import { getApp, getApps, initializeApp } from 'firebase/app';
+import {
+  Firestore,
+  collection,
+  deleteDoc,
+  doc,
+  getFirestore,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore';
+import { FirebaseStorage, deleteObject, getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { PhotoLocation, PhotoAddress, ExifData } from '../models/photo.model';
 
 type Heic2AnyConverter = (options: {
@@ -11,43 +23,76 @@ type Heic2AnyConverter = (options: {
   quality?: number;
 }) => Promise<Blob | Blob[]>;
 
+type FirebasePhotoRecord = {
+  fileName?: string;
+  fileDataUrl?: string;
+  storagePath?: string;
+  lat?: number;
+  lng?: number;
+  uploadedAt?: string;
+  locationName?: string;
+  address?: PhotoAddress;
+  exifData?: ExifData;
+};
+
 @Injectable({
   providedIn: 'root',
 })
 export class PhotoBackendService {
-  private apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/photos';
-  private backendOrigin = new URL(this.apiUrl).origin;
   private photosSubject = new BehaviorSubject<PhotoLocation[]>([]);
-  private pendingLocationLookups = new Map<string, Promise<PhotoLocation>>();
+  private pendingLocationLookups = new Map<string, Promise<PhotoLocation | undefined>>();
+  private firestore?: Firestore;
+  private storage?: FirebaseStorage;
+  private firebaseConfigured = false;
   public photos$ = this.photosSubject.asObservable();
 
-  constructor(private http: HttpClient) {
-    this.loadPhotosFromBackend();
+  constructor() {
+    this.initializeFirebase();
+    if (this.firebaseConfigured) {
+      this.loadPhotosFromFirebase();
+    } else {
+      console.warn('Firebase is not configured. Set the VITE_FIREBASE_* variables to enable uploads.');
+    }
   }
 
-  /**
-   * Load photos from backend API
-   */
-  private loadPhotosFromBackend(): void {
-    this.http
-      .get<any>(`${this.apiUrl}`)
-      .pipe(
-        catchError((error) => {
-          console.error('Failed to load photos from backend:', error);
-          return of({ success: false, data: [] });
-        })
-      )
-      .subscribe((response) => {
-        if (response.success && Array.isArray(response.data)) {
-          const photos = response.data.map((photo: any) => this.apiResponseToPhoto(photo));
-          this.photosSubject.next(photos);
-        }
-      });
+  private initializeFirebase(): void {
+    const config = {
+      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+      appId: import.meta.env.VITE_FIREBASE_APP_ID,
+    };
+
+    this.firebaseConfigured = Object.values(config).every((value) => typeof value === 'string' && value.trim());
+    if (!this.firebaseConfigured) {
+      return;
+    }
+
+    const app = getApps().length ? getApp() : initializeApp(config);
+    this.firestore = getFirestore(app);
+    this.storage = getStorage(app);
   }
 
-  /**
-   * Get all photos
-   */
+  private loadPhotosFromFirebase(): void {
+    const firestore = this.requireFirestore();
+    const photosQuery = query(collection(firestore, 'photos'), orderBy('uploadedAt', 'desc'));
+
+    onSnapshot(
+      photosQuery,
+      (snapshot) => {
+        const photos = snapshot.docs.map((snapshotDoc) => {
+          return this.firebaseDocToPhoto(snapshotDoc.id, snapshotDoc.data() as FirebasePhotoRecord);
+        });
+        this.photosSubject.next(photos);
+      },
+      (error) => {
+        console.error('Failed to load photos from Firebase:', error);
+      }
+    );
+  }
+
   getPhotos(): Observable<PhotoLocation[]> {
     return this.photos$;
   }
@@ -72,7 +117,7 @@ export class PhotoBackendService {
     }
 
     const lookup = this.reverseGeocode(currentPhoto.lat, currentPhoto.lng)
-      .then((geoResult) => {
+      .then(async (geoResult) => {
         if (!geoResult) {
           return this.getPhotoById(id) || currentPhoto;
         }
@@ -88,6 +133,12 @@ export class PhotoBackendService {
         };
 
         this.replacePhoto(updatedPhoto);
+        await updateDoc(doc(this.requireFirestore(), 'photos', id), {
+          locationName: updatedPhoto.locationName,
+          address: updatedPhoto.address || {},
+        }).catch((error) => {
+          console.warn('Failed to persist location details to Firebase:', error);
+        });
         return updatedPhoto;
       })
       .finally(() => {
@@ -106,9 +157,6 @@ export class PhotoBackendService {
     });
   }
 
-  /**
-   * Upload a new photo to the backend
-   */
   async uploadPhoto(
     file: File,
     lat: number,
@@ -118,60 +166,40 @@ export class PhotoBackendService {
     locationName?: string,
     title?: string
   ): Promise<PhotoLocation> {
-    const formData = new FormData();
-    formData.append('image', file);
-    formData.append('location_name', locationName || file.name);
-    formData.append('title', title || file.name);
-    formData.append('latitude', lat.toString());
-    formData.append('longitude', lng.toString());
+    const firestore = this.requireFirestore();
+    const storage = this.requireStorage();
+    const photoRef = doc(collection(firestore, 'photos'));
+    const safeFileName = this.sanitizeFileName(file.name);
+    const storagePath = `photos/${photoRef.id}/${safeFileName}`;
+    const storageRef = ref(storage, storagePath);
 
-    if (exifData.dateTime) {
-      formData.append('date_taken', exifData.dateTime);
-    }
-
-    // Add EXIF data
-    const exifPayload: any = {};
-    if (exifData.make) exifPayload.exif_camera_make = exifData.make;
-    if (exifData.model) exifPayload.exif_camera_model = exifData.model;
-    if (exifData.iso) exifPayload.exif_iso = exifData.iso;
-    if (exifData.focalLength) exifPayload.exif_focal_length = exifData.focalLength;
-    if (exifData.flashUsed !== undefined) exifPayload.exif_flash = exifData.flashUsed;
-
-    formData.append('exif_data', JSON.stringify(exifPayload));
-
-    // Add address data
-    const addressPayload: any = {};
-    if (addressData.village) addressPayload.address_village = addressData.village;
-    if (addressData.town) addressPayload.address_town = addressData.town;
-    if (addressData.city) addressPayload.address_city = addressData.city;
-    if (addressData.county) addressPayload.address_county = addressData.county;
-    if (addressData.state) addressPayload.address_state = addressData.state;
-    if (addressData.country) addressPayload.address_country = addressData.country;
-    if (addressData.postcode) addressPayload.address_postcode = addressData.postcode;
-
-    formData.append('address_data', JSON.stringify(addressPayload));
-
-    return new Promise((resolve, reject) => {
-      this.http
-        .post<any>(`${this.apiUrl}`, formData)
-        .pipe(
-          catchError((error) => {
-            console.error('Upload failed:', error);
-            reject(new Error(this.extractBackendError(error)));
-            return of(null);
-          })
-        )
-        .subscribe((response) => {
-          if (response?.success && response?.data) {
-            const photo = this.apiResponseToPhoto(response.data);
-            const currentPhotos = this.photosSubject.value;
-            this.photosSubject.next([...currentPhotos, photo]);
-            resolve(photo);
-          } else {
-            reject(new Error('Upload failed'));
-          }
-        });
+    await uploadBytes(storageRef, file, {
+      contentType: file.type || 'application/octet-stream',
     });
+
+    const downloadUrl = await getDownloadURL(storageRef);
+    const uploadedAt = new Date().toISOString();
+    const fileName = title || file.name;
+    const resolvedLocationName = locationName || fileName;
+
+    const photoRecord: FirebasePhotoRecord = {
+      fileName,
+      fileDataUrl: downloadUrl,
+      storagePath,
+      lat,
+      lng,
+      uploadedAt,
+      locationName: resolvedLocationName,
+      address: addressData,
+      exifData,
+    };
+
+    await setDoc(photoRef, photoRecord);
+
+    const photo = this.firebaseDocToPhoto(photoRef.id, photoRecord);
+    const currentPhotos = this.photosSubject.value.filter((item) => item.id !== photo.id);
+    this.photosSubject.next([photo, ...currentPhotos]);
+    return photo;
   }
 
   async prepareUploadFile(file: File): Promise<File> {
@@ -221,35 +249,24 @@ export class PhotoBackendService {
     }
   }
 
-  /**
-   * Delete a photo from the backend
-   */
   async removePhoto(id: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.http
-        .delete<any>(`${this.apiUrl}/${id}`)
-        .pipe(
-          catchError((error) => {
-            console.error('Delete failed:', error);
-            reject(new Error(this.extractBackendError(error)));
-            return of(null);
-          })
-        )
-        .subscribe((response) => {
-          if (response?.success) {
-            const currentPhotos = this.photosSubject.value.filter((p) => p.id !== id);
-            this.photosSubject.next(currentPhotos);
-            resolve();
-          } else {
-            reject(new Error('Delete failed'));
-          }
-        });
-    });
+    const photo = this.getPhotoById(id);
+    if (!photo) {
+      return;
+    }
+
+    if (photo.storagePath) {
+      await deleteObject(ref(this.requireStorage(), photo.storagePath)).catch((error) => {
+        console.warn('Storage delete failed:', error);
+      });
+    }
+
+    await deleteDoc(doc(this.requireFirestore(), 'photos', id));
+
+    const currentPhotos = this.photosSubject.value.filter((p) => p.id !== id);
+    this.photosSubject.next(currentPhotos);
   }
 
-  /**
-   * Extract EXIF metadata from image file
-   */
   async extractPhotoMetadata(file: File): Promise<{ lat: number; lng: number; exifData?: ExifData } | null> {
     try {
       const exifData = await this.parseExifWithTimeout(file, 12000);
@@ -297,9 +314,6 @@ export class PhotoBackendService {
     return Promise.race([parsePromise, timeoutPromise]);
   }
 
-  /**
-   * Perform reverse geocoding via Nominatim API
-   */
   async reverseGeocode(lat: number, lng: number): Promise<{ locationName: string; address: PhotoAddress } | null> {
     try {
       const response = await fetch(
@@ -343,73 +357,29 @@ export class PhotoBackendService {
     return null;
   }
 
-  /**
-   * Convert API response to PhotoLocation object
-   */
-  private apiResponseToPhoto(apiData: any): PhotoLocation {
-    const locationName = this.preferredLocationName(apiData);
-
+  private firebaseDocToPhoto(id: string, data: FirebasePhotoRecord): PhotoLocation {
     return {
-      id: apiData.id,
-      fileName: apiData.title || apiData.location_name || 'Photo',
-      fileDataUrl: this.resolveImageUrl(apiData.image_url),
-      lat: apiData.latitude,
-      lng: apiData.longitude,
-      timestamp: apiData.date_taken ? new Date(apiData.date_taken) : undefined,
-      locationName,
-      exifData: {
-        dateTime: apiData.date_taken,
-        make: apiData.exif_data?.make,
-        model: apiData.exif_data?.model,
-        iso: apiData.exif_data?.iso,
-        focalLength: apiData.exif_data?.focal_length,
-        flashUsed: apiData.exif_data?.flash,
-      },
-      address: apiData.address || {},
+      id,
+      fileName: data.fileName || 'Photo',
+      fileDataUrl: typeof data.fileDataUrl === 'string' ? data.fileDataUrl : '',
+      storagePath: typeof data.storagePath === 'string' ? data.storagePath : undefined,
+      lat: Number(data.lat),
+      lng: Number(data.lng),
+      timestamp: data.uploadedAt ? new Date(data.uploadedAt) : undefined,
+      locationName: this.preferredLocationName(data),
+      exifData: data.exifData || {},
+      address: data.address || {},
     };
   }
 
-  private resolveImageUrl(imageUrl: string | null | undefined): string {
-    if (!imageUrl || typeof imageUrl !== 'string') {
-      return '';
-    }
-
-    if (/^https?:\/\//i.test(imageUrl) || imageUrl.startsWith('data:')) {
-      return imageUrl;
-    }
-
-    return `${this.backendOrigin}${imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`}`;
-  }
-
-  private extractBackendError(error: any): string {
-    const data = error?.error;
-
-    if (typeof data === 'string' && data.trim()) {
-      return data;
-    }
-
-    if (data?.message && typeof data.message === 'string') {
-      if (data?.errors && typeof data.errors === 'object') {
-        const firstField = Object.keys(data.errors)[0];
-        const firstMsg = firstField ? data.errors[firstField]?.[0] : null;
-        if (firstMsg) {
-          return firstMsg;
-        }
-      }
-      return data.message;
-    }
-
-    return error?.message || 'Request failed';
-  }
-
-  private preferredLocationName(apiData: any): string | undefined {
-    return apiData.location_name
-      || apiData.address?.village
-      || apiData.address?.town
-      || apiData.address?.city
-      || apiData.address?.county
-      || apiData.address?.state
-      || apiData.address?.country
+  private preferredLocationName(data: FirebasePhotoRecord): string | undefined {
+    return data.locationName
+      || data.address?.village
+      || data.address?.town
+      || data.address?.city
+      || data.address?.county
+      || data.address?.state
+      || data.address?.country
       || undefined;
   }
 
@@ -441,6 +411,26 @@ export class PhotoBackendService {
     });
 
     this.photosSubject.next(nextPhotos);
+  }
+
+  private requireFirestore(): Firestore {
+    if (!this.firestore) {
+      throw new Error('Firebase Firestore is not configured. Add the VITE_FIREBASE_* variables first.');
+    }
+
+    return this.firestore;
+  }
+
+  private requireStorage(): FirebaseStorage {
+    if (!this.storage) {
+      throw new Error('Firebase Storage is not configured. Add the VITE_FIREBASE_* variables first.');
+    }
+
+    return this.storage;
+  }
+
+  private sanitizeFileName(fileName: string): string {
+    return fileName.replace(/[^a-zA-Z0-9._-]+/g, '-');
   }
 
   private isHeicFile(file: File): boolean {

@@ -115,7 +115,7 @@ export class UploadComponent {
 
         this.uploadItems[i] = {
           ...this.uploadItems[i],
-          message: `Uploading to Statamic as ${locationName}...`
+          message: `Uploading to cloud storage as ${locationName}...`
         };
 
         const uploadFile = await this.photoService.prepareUploadFile(file);
@@ -140,7 +140,7 @@ export class UploadComponent {
         this.uploadItems[i] = {
           fileName: file.name,
           status: 'success',
-          message: `Stored in Statamic as ${savedPhoto.locationName || savedPhoto.fileName}`
+          message: `Stored as ${savedPhoto.locationName || savedPhoto.fileName}`
         };
 
       } catch (err) {
