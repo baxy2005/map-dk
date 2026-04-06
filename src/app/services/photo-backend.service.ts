@@ -14,7 +14,6 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
-import { FirebaseStorage, deleteObject, getDownloadURL, getStorage, ref, uploadBytes } from 'firebase/storage';
 import { PhotoLocation, PhotoAddress, ExifData } from '../models/photo.model';
 
 type Heic2AnyConverter = (options: {
@@ -26,7 +25,6 @@ type Heic2AnyConverter = (options: {
 type FirebasePhotoRecord = {
   fileName?: string;
   fileDataUrl?: string;
-  storagePath?: string;
   lat?: number;
   lng?: number;
   uploadedAt?: string;
@@ -42,7 +40,6 @@ export class PhotoBackendService {
   private photosSubject = new BehaviorSubject<PhotoLocation[]>([]);
   private pendingLocationLookups = new Map<string, Promise<PhotoLocation | undefined>>();
   private firestore?: Firestore;
-  private storage?: FirebaseStorage;
   private firebaseConfigured = false;
   public photos$ = this.photosSubject.asObservable();
 
@@ -60,7 +57,6 @@ export class PhotoBackendService {
       apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
       authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
       projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-      storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
       messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
       appId: import.meta.env.VITE_FIREBASE_APP_ID,
     };
@@ -72,7 +68,6 @@ export class PhotoBackendService {
 
     const app = getApps().length ? getApp() : initializeApp(config);
     this.firestore = getFirestore(app);
-    this.storage = getStorage(app);
   }
 
   private loadPhotosFromFirebase(): void {
@@ -167,25 +162,16 @@ export class PhotoBackendService {
     title?: string
   ): Promise<PhotoLocation> {
     const firestore = this.requireFirestore();
-    const storage = this.requireStorage();
     const photoRef = doc(collection(firestore, 'photos'));
-    const safeFileName = this.sanitizeFileName(file.name);
-    const storagePath = `photos/${photoRef.id}/${safeFileName}`;
-    const storageRef = ref(storage, storagePath);
 
-    await uploadBytes(storageRef, file, {
-      contentType: file.type || 'application/octet-stream',
-    });
-
-    const downloadUrl = await getDownloadURL(storageRef);
+    const fileDataUrl = await this.fileToDataUrl(file);
     const uploadedAt = new Date().toISOString();
     const fileName = title || file.name;
     const resolvedLocationName = locationName || fileName;
 
     const photoRecord: FirebasePhotoRecord = {
       fileName,
-      fileDataUrl: downloadUrl,
-      storagePath,
+      fileDataUrl,
       lat,
       lng,
       uploadedAt,
@@ -209,7 +195,7 @@ export class PhotoBackendService {
       workingFile = await this.convertHeicToJpeg(workingFile);
     }
 
-    const maxBytes = 1900 * 1024;
+    const maxBytes = 680 * 1024;
     if (workingFile.size <= maxBytes) {
       return workingFile;
     }
@@ -253,12 +239,6 @@ export class PhotoBackendService {
     const photo = this.getPhotoById(id);
     if (!photo) {
       return;
-    }
-
-    if (photo.storagePath) {
-      await deleteObject(ref(this.requireStorage(), photo.storagePath)).catch((error) => {
-        console.warn('Storage delete failed:', error);
-      });
     }
 
     await deleteDoc(doc(this.requireFirestore(), 'photos', id));
@@ -362,7 +342,6 @@ export class PhotoBackendService {
       id,
       fileName: data.fileName || 'Photo',
       fileDataUrl: typeof data.fileDataUrl === 'string' ? data.fileDataUrl : '',
-      storagePath: typeof data.storagePath === 'string' ? data.storagePath : undefined,
       lat: Number(data.lat),
       lng: Number(data.lng),
       timestamp: data.uploadedAt ? new Date(data.uploadedAt) : undefined,
@@ -421,16 +400,13 @@ export class PhotoBackendService {
     return this.firestore;
   }
 
-  private requireStorage(): FirebaseStorage {
-    if (!this.storage) {
-      throw new Error('Firebase Storage is not configured. Add the VITE_FIREBASE_* variables first.');
-    }
-
-    return this.storage;
-  }
-
-  private sanitizeFileName(fileName: string): string {
-    return fileName.replace(/[^a-zA-Z0-9._-]+/g, '-');
+  private fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to read file as data URL'));
+      reader.readAsDataURL(file);
+    });
   }
 
   private isHeicFile(file: File): boolean {
