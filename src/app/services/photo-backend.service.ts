@@ -129,9 +129,10 @@ export class PhotoBackendService {
         };
 
         this.replacePhoto(updatedPhoto);
+        const sanitizedAddress = this.removeUndefinedDeep(updatedPhoto.address || {});
         await updateDoc(doc(this.requireFirestore(), 'photos', id), {
-          locationName: updatedPhoto.locationName,
-          address: updatedPhoto.address || {},
+          locationName: updatedPhoto.locationName ?? null,
+          address: sanitizedAddress,
         }).catch((error) => {
           console.warn('Failed to persist location details to Firebase:', error);
         });
@@ -169,6 +170,8 @@ export class PhotoBackendService {
     const uploadedAt = new Date().toISOString();
     const fileName = title || file.name;
     const resolvedLocationName = locationName || fileName;
+    const sanitizedAddress = this.removeUndefinedDeep(addressData || {});
+    const sanitizedExifData = this.removeUndefinedDeep(exifData || {});
 
     const photoRecord: FirebasePhotoRecord = {
       fileName,
@@ -177,11 +180,11 @@ export class PhotoBackendService {
       lng,
       uploadedAt,
       locationName: resolvedLocationName,
-      address: addressData,
-      exifData,
+      address: sanitizedAddress,
+      exifData: sanitizedExifData,
     };
 
-    await setDoc(photoRef, photoRecord);
+    await setDoc(photoRef, this.removeUndefinedDeep(photoRecord));
 
     const photo = this.firebaseDocToPhoto(photoRef.id, photoRecord);
     const currentPhotos = this.photosSubject.value.filter((item) => item.id !== photo.id);
@@ -408,6 +411,30 @@ export class PhotoBackendService {
       reader.onerror = () => reject(new Error('Failed to read file as data URL'));
       reader.readAsDataURL(file);
     });
+  }
+
+  private removeUndefinedDeep<T>(value: T): T {
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => this.removeUndefinedDeep(item))
+        .filter((item) => item !== undefined) as T;
+    }
+
+    if (value && typeof value === 'object') {
+      const cleaned: Record<string, unknown> = {};
+      for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+        if (item === undefined) {
+          continue;
+        }
+        const nested = this.removeUndefinedDeep(item);
+        if (nested !== undefined) {
+          cleaned[key] = nested;
+        }
+      }
+      return cleaned as T;
+    }
+
+    return value;
   }
 
   private isHeicFile(file: File): boolean {
