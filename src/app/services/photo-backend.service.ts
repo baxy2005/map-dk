@@ -53,12 +53,13 @@ export class PhotoBackendService {
   }
 
   private initializeFirebase(): void {
+    const env = ((import.meta as any)?.env ?? {}) as Record<string, string | undefined>;
     const config = {
-      apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-      authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-      projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-      messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-      appId: import.meta.env.VITE_FIREBASE_APP_ID,
+      apiKey: env['VITE_FIREBASE_API_KEY'] || 'AIzaSyCc6D09lKdSJEey3a_15ZBbJhSFss-mOs4',
+      authDomain: env['VITE_FIREBASE_AUTH_DOMAIN'] || 'map-dk-31405.firebaseapp.com',
+      projectId: env['VITE_FIREBASE_PROJECT_ID'] || 'map-dk-31405',
+      messagingSenderId: env['VITE_FIREBASE_MESSAGING_SENDER_ID'] || '419775459904',
+      appId: env['VITE_FIREBASE_APP_ID'] || '1:419775459904:web:eedb1f02206f88bb3b65a5',
     };
 
     this.firebaseConfigured = Object.values(config).every((value) => typeof value === 'string' && value.trim());
