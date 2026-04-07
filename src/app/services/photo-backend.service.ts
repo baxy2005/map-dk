@@ -199,43 +199,53 @@ export class PhotoBackendService {
       workingFile = await this.convertHeicToJpeg(workingFile);
     }
 
-    const maxBytes = 680 * 1024;
+    // Base64 adds ~33% overhead, so keep binary payload well below Firestore's 1 MiB field limit.
+    const maxBytes = 520 * 1024;
     if (workingFile.size <= maxBytes) {
       return workingFile;
     }
 
     try {
       const img = await this.loadImage(workingFile);
-      const maxDimension = 2560;
-      const ratio = Math.min(1, maxDimension / Math.max(img.width, img.height));
-      const width = Math.max(1, Math.round(img.width * ratio));
-      const height = Math.max(1, Math.round(img.height * ratio));
-
       const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-
       const ctx = canvas.getContext('2d');
       if (!ctx) {
-        return file;
-      }
-
-      ctx.drawImage(img, 0, 0, width, height);
-
-      const jpegBlob = await this.canvasToBlob(canvas, 'image/jpeg', 0.82);
-      if (!jpegBlob) {
-        return workingFile;
+        throw new Error('Image compression failed: cannot initialize canvas context.');
       }
 
       const baseName = workingFile.name.replace(/\.[^.]+$/, '') || 'upload';
-      const compressed = new File([jpegBlob], `${baseName}.jpg`, {
-        type: 'image/jpeg',
-        lastModified: Date.now(),
-      });
+      const maxStartDimension = 2200;
+      let scale = Math.min(1, maxStartDimension / Math.max(img.width, img.height));
 
-      return compressed.size < workingFile.size ? compressed : workingFile;
+      for (let step = 0; step < 8; step++) {
+        const width = Math.max(1, Math.round(img.width * scale));
+        const height = Math.max(1, Math.round(img.height * scale));
+        canvas.width = width;
+        canvas.height = height;
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const quality = Math.max(0.45, 0.86 - step * 0.06);
+        const jpegBlob = await this.canvasToBlob(canvas, 'image/jpeg', quality);
+        if (!jpegBlob) {
+          continue;
+        }
+
+        const candidate = new File([jpegBlob], `${baseName}.jpg`, {
+          type: 'image/jpeg',
+          lastModified: Date.now(),
+        });
+
+        if (candidate.size <= maxBytes) {
+          return candidate;
+        }
+
+        scale *= 0.82;
+      }
+
+      throw new Error('Image is too large for Firestore storage. Please use a smaller photo.');
     } catch {
-      return workingFile;
+      throw new Error('Image is too large for Firestore storage. Please use a smaller photo.');
     }
   }
 
